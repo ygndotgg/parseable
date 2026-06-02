@@ -81,6 +81,7 @@ fn parse_cidrs(values: &[String]) -> Result<Vec<IpNet>, OutboundPolicyError> {
 pub struct PreparedAlertTarget {
     pub client: reqwest::Client,
     pub headers: http::HeaderMap,
+    pub authorization_allowed: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -169,6 +170,7 @@ pub async fn prepare_alert_target(
     Ok(PreparedAlertTarget {
         client,
         headers: validated_headers,
+        authorization_allowed,
     })
 }
 
@@ -370,4 +372,171 @@ fn matches_domain_list(host: &str, domains: &[String]) -> bool {
         let domain = domain.trim_end_matches('.').to_ascii_lowercase();
         host == domain || host.ends_with(&format!(".{domain}"))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::{Mutex, MutexGuard};
+
+    static POLICY_TEST_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+    fn policy_with(
+        allow_private: bool,
+        allowed_cidrs: &[&str],
+        denied_cidrs: &[&str],
+    ) -> AlertTargetPolicyConfig {
+        AlertTargetPolicyConfig {
+            allow_private,
+            allowed_cidrs: allowed_cidrs
+                .iter()
+                .map(|value| value.to_string())
+                .collect(),
+            denied_cidrs: denied_cidrs.iter().map(|value| value.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    fn socket(ip: IpAddr) -> SocketAddr {
+        SocketAddr::new(ip, 80)
+    }
+
+    async fn set_policy(
+        policy: AlertTargetPolicyConfig,
+    ) -> Result<MutexGuard<'static, ()>, OutboundPolicyError> {
+        let guard = POLICY_TEST_LOCK.lock().await;
+        replace_policy(policy).await?;
+        Ok(guard)
+    }
+
+    #[test]
+    fn public_addresses_are_allowed_by_default() {
+        let policy = AlertTargetPolicyConfig::default();
+        let addrs = [socket(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)))];
+
+        validate_resolved_addrs("example.com", &addrs, &policy).unwrap();
+    }
+
+    #[test]
+    fn private_addresses_are_blocked_by_default() {
+        let policy = AlertTargetPolicyConfig::default();
+        let addrs = [socket(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)))];
+
+        let err = validate_resolved_addrs("localhost", &addrs, &policy).unwrap_err();
+
+        assert!(matches!(
+            err,
+            OutboundPolicyError::PrivateAddressNotAllowed(_)
+        ));
+    }
+
+    #[test]
+    fn private_addresses_require_allow_private_and_allowlist_match() {
+        let addrs = [socket(IpAddr::V4(Ipv4Addr::new(10, 10, 0, 10)))];
+        let policy = policy_with(true, &["10.10.0.0/16"], &[]);
+
+        validate_resolved_addrs("internal.example.com", &addrs, &policy).unwrap();
+    }
+
+    #[test]
+    fn denied_cidrs_override_allowlists() {
+        let addrs = [socket(IpAddr::V4(Ipv4Addr::new(10, 10, 0, 10)))];
+        let policy = policy_with(true, &["10.10.0.0/16"], &["10.10.0.10/32"]);
+
+        let err = validate_resolved_addrs("internal.example.com", &addrs, &policy).unwrap_err();
+
+        assert!(matches!(err, OutboundPolicyError::DeniedAddress(_)));
+    }
+
+    #[test]
+    fn invalid_cidr_policy_is_rejected() {
+        let policy = policy_with(true, &["bad-cidr"], &[]);
+
+        let err = validate_policy(&policy).unwrap_err();
+
+        assert!(matches!(err, OutboundPolicyError::InvalidCidr { .. }));
+    }
+
+    #[test]
+    fn authorization_header_requires_allowlist_decision() {
+        let mut headers = HashMap::new();
+        headers.insert("Authorization".to_string(), "Bearer token".to_string());
+
+        let err = validate_header(Some(&headers), false).unwrap_err();
+        assert!(matches!(err, OutboundPolicyError::DeniedHeader(name) if name == "Authorization"));
+
+        let validated = validate_header(Some(&headers), true).unwrap();
+        assert_eq!(
+            validated.get("authorization").unwrap(),
+            HeaderValue::from_static("Bearer token")
+        );
+    }
+
+    #[test]
+    fn cookie_header_is_always_blocked() {
+        let mut headers = HashMap::new();
+        headers.insert("Cookie".to_string(), "session=secret".to_string());
+
+        let err = validate_header(Some(&headers), true).unwrap_err();
+
+        assert!(matches!(err, OutboundPolicyError::DeniedHeader(name) if name == "Cookie"));
+    }
+
+    #[test]
+    fn slack_targets_are_https_only_and_host_pinned() {
+        let http_slack = Url::parse("http://hooks.slack.com/services/test").unwrap();
+        let fake_slack = Url::parse("https://example.com/services/test").unwrap();
+        let policy = AlertTargetPolicyConfig::default();
+
+        assert!(matches!(
+            validate_scheme(&http_slack, AlertTargetKind::Slack),
+            Err(OutboundPolicyError::SlackRequiresHttps)
+        ));
+        assert!(matches!(
+            validate_domain_policy("example.com", AlertTargetKind::Slack, &policy),
+            Err(OutboundPolicyError::InvalidSlackHost(_))
+        ));
+        validate_domain_policy("hooks.slack.com", AlertTargetKind::Slack, &policy).unwrap();
+        validate_domain_policy("hooks.slack-gov.com", AlertTargetKind::Slack, &policy).unwrap();
+        validate_scheme(&fake_slack, AlertTargetKind::Slack).unwrap();
+    }
+
+    #[tokio::test]
+    async fn skip_tls_check_requires_operator_policy() {
+        let _guard = set_policy(AlertTargetPolicyConfig::default())
+            .await
+            .unwrap();
+        let endpoint = Url::parse("https://1.1.1.1/webhook").unwrap();
+
+        let result = prepare_alert_target(&endpoint, AlertTargetKind::Webhook, true, None).await;
+
+        assert!(matches!(
+            result,
+            Err(OutboundPolicyError::InvalidTlsDisabled)
+        ));
+    }
+
+    #[tokio::test]
+    async fn prepare_alert_target_allows_authorization_for_allowlisted_destination() {
+        let _guard = set_policy(AlertTargetPolicyConfig {
+            allowed_cidrs: vec!["1.1.1.1/32".to_string()],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let endpoint = Url::parse("http://1.1.1.1/webhook").unwrap();
+        let mut headers = HashMap::new();
+        headers.insert("Authorization".to_string(), "Bearer token".to_string());
+
+        let prepared =
+            prepare_alert_target(&endpoint, AlertTargetKind::Webhook, false, Some(&headers))
+                .await
+                .unwrap();
+
+        assert!(prepared.authorization_allowed);
+        assert_eq!(
+            prepared.headers.get("authorization").unwrap(),
+            HeaderValue::from_static("Bearer token")
+        );
+    }
 }
