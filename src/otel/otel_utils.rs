@@ -23,6 +23,7 @@ use opentelemetry_proto::tonic::common::v1::{
 use serde_json::{Map, Value};
 
 // Value can be one of types - String, Bool, Int, Double, ArrayValue, AnyValue, KeyValueList, Byte
+#[hotpath::measure]
 pub fn collect_json_from_value(key: &String, value: OtelValue) -> Map<String, Value> {
     let mut value_json: Map<String, Value> = Map::new();
     match value {
@@ -192,6 +193,7 @@ pub fn insert_bool_if_some(map: &mut Map<String, Value>, key: &str, option: &Opt
     }
 }
 
+#[hotpath::measure]
 pub fn insert_attributes(map: &mut Map<String, Value>, attributes: &[KeyValue]) {
     let attributes_json = flatten_attributes(attributes);
     for (key, value) in attributes_json {
@@ -199,6 +201,7 @@ pub fn insert_attributes(map: &mut Map<String, Value>, attributes: &[KeyValue]) 
     }
 }
 
+#[hotpath::measure]
 pub fn convert_epoch_nano_to_timestamp(epoch_ns: i64) -> String {
     let dt = DateTime::from_timestamp_nanos(epoch_ns).naive_utc();
     dt.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string()

@@ -27,6 +27,7 @@ object_store = { version = "0.13.1", features = [
     "gcp",
 ] }
 parquet = "58.0.0"
+hotpath = "0.16.1"
 
 # Web server and HTTP-related
 actix-cors = "0.7.0"
@@ -210,6 +211,8 @@ assets-url = "https://parseable-prism-build.s3.us-east-2.amazonaws.com/v2.7.2/bu
 assets-sha1 = "541746bd89b41528477a57a2f6f066dce145dd73"
 
 [features]
+hotpath = ["hotpath/hotpath-cpu"]
+hotpath-alloc = ["hotpath/hotpath-alloc"]
 debug = []
 kafka = [
     "rdkafka",
@@ -224,3 +227,7 @@ kafka = [
 inherits = "release"
 lto = "fat"
 codegen-units = 1
+
+[profile.profiling]
+inherits = "release"
+debug = true

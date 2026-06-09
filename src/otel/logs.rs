@@ -116,6 +116,7 @@ fn category_from_body(body_str: &str) -> &'static str {
 /// this function flattens the `LogRecord` object
 /// and returns a `Map` of the flattened json
 /// this function is called recursively for each log record object in the otel logs
+#[hotpath::measure]
 pub fn flatten_log_record(log_record: &LogRecord) -> Map<String, Value> {
     let mut log_record_json: Map<String, Value> = Map::new();
     log_record_json.insert(
@@ -204,6 +205,7 @@ pub fn flatten_log_record(log_record: &LogRecord) -> Map<String, Value> {
 
 /// this function flattens the `ScopeLogs` object
 /// and returns a `Vec` of `Map` of the flattened json
+#[hotpath::measure]
 fn flatten_scope_log(scope_log: &ScopeLogs, tenant_id: &str) -> Vec<Map<String, Value>> {
     let mut vec_scope_log_json = Vec::new();
     let mut scope_log_json = Map::new();
@@ -238,6 +240,7 @@ fn flatten_scope_log(scope_log: &ScopeLogs, tenant_id: &str) -> Vec<Map<String, 
 }
 
 /// Common function to process resource logs and merge resource-level fields
+#[hotpath::measure]
 fn process_resource_logs<T>(
     resource_logs: &[T],
     get_resource: fn(&T) -> Option<&opentelemetry_proto::tonic::resource::v1::Resource>,
@@ -292,6 +295,8 @@ pub fn flatten_otel_protobuf(message: &ExportLogsServiceRequest, tenant_id: &str
         tenant_id,
     )
 }
+
+#[hotpath::measure]
 
 /// this function performs the custom flattening of the otel logs
 /// and returns a `Vec` of `Value::Object` of the flattened json
