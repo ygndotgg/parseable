@@ -207,9 +207,14 @@ pub fn flatten_log_record(log_record: &LogRecord) -> Map<String, Value> {
 /// this function flattens the `ScopeLogs` object
 /// and returns a `Vec` of `Map` of the flattened json
 #[hotpath::measure]
-fn flatten_scope_log(scope_log: &ScopeLogs, tenant_id: &str) -> Vec<Map<String, Value>> {
+fn flatten_scope_log(
+    scope_log: &ScopeLogs,
+    tenant_id: &str,
+    resource_base_json: &Map<String, Value>,
+) -> Vec<Map<String, Value>> {
     let mut vec_scope_log_json = Vec::with_capacity(scope_log.log_records.len());
-    let mut scope_log_json = Map::with_capacity(4 + scope_log.log_records.len());
+    // resources and scope merged once
+    let mut scope_log_json = resource_base_json.clone();
     if let Some(scope) = &scope_log.scope {
         scope_log_json.insert("scope_name".to_string(), Value::String(scope.name.clone()));
         scope_log_json.insert(
@@ -222,11 +227,11 @@ fn flatten_scope_log(scope_log: &ScopeLogs, tenant_id: &str) -> Vec<Map<String, 
             Value::Number(scope.dropped_attributes_count.into()),
         );
     }
+
     scope_log_json.insert(
         "scope_log_schema_url".to_string(),
         Value::String(scope_log.schema_url.clone()),
     );
-
     for log_record in &scope_log.log_records {
         let log_record_json = flatten_log_record(log_record);
         let mut combined_json = scope_log_json.clone();
@@ -270,7 +275,11 @@ where
         let scope_logs = get_scope_logs(resource_log);
 
         for scope_log in scope_logs {
-            vec_resource_logs_json.extend(flatten_scope_log(scope_log, tenant_id));
+            vec_resource_logs_json.extend(flatten_scope_log(
+                scope_log,
+                tenant_id,
+                &resource_log_json,
+            ));
         }
 
         resource_log_json.insert(
@@ -279,7 +288,6 @@ where
         );
 
         for resource_logs_json in &mut vec_resource_logs_json {
-            resource_logs_json.extend(resource_log_json.clone());
             vec_otel_json.push(Value::Object(resource_logs_json.clone()));
         }
     }
