@@ -25,7 +25,8 @@ use serde_json::{Map, Value};
 // Value can be one of types - String, Bool, Int, Double, ArrayValue, AnyValue, KeyValueList, Byte
 #[hotpath::measure]
 pub fn collect_json_from_value(key: &String, value: OtelValue) -> Map<String, Value> {
-    let mut value_json: Map<String, Value> = Map::new();
+    // For Scalar cases, it inserts exactly one entry
+    let mut value_json: Map<String, Value> = Map::with_capacity(1);
     match value {
         OtelValue::StringValue(str_val) => {
             value_json.insert(key.to_string(), Value::String(str_val));

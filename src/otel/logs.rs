@@ -118,7 +118,8 @@ fn category_from_body(body_str: &str) -> &'static str {
 /// this function is called recursively for each log record object in the otel logs
 #[hotpath::measure]
 pub fn flatten_log_record(log_record: &LogRecord) -> Map<String, Value> {
-    let mut log_record_json: Map<String, Value> = Map::new();
+    let mut log_record_json: Map<String, Value> =
+        Map::with_capacity(24 + log_record.attributes.len());
     log_record_json.insert(
         "time_unix_nano".to_string(),
         Value::String(convert_epoch_nano_to_timestamp(
@@ -207,8 +208,8 @@ pub fn flatten_log_record(log_record: &LogRecord) -> Map<String, Value> {
 /// and returns a `Vec` of `Map` of the flattened json
 #[hotpath::measure]
 fn flatten_scope_log(scope_log: &ScopeLogs, tenant_id: &str) -> Vec<Map<String, Value>> {
-    let mut vec_scope_log_json = Vec::new();
-    let mut scope_log_json = Map::new();
+    let mut vec_scope_log_json = Vec::with_capacity(scope_log.log_records.len());
+    let mut scope_log_json = Map::with_capacity(4 + scope_log.log_records.len());
     if let Some(scope) = &scope_log.scope {
         scope_log_json.insert("scope_name".to_string(), Value::String(scope.name.clone()));
         scope_log_json.insert(
