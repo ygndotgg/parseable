@@ -146,16 +146,26 @@ pub fn flatten_log_record(log_record: &LogRecord) -> Map<String, Value> {
             log_record_json.insert(key.clone(), value.clone());
 
             // If value is a string that can be parsed as JSON object, extract its fields
-            if let Value::String(s) = value
-                && let Ok(parsed) = serde_json::from_str::<Value>(s)
-                && parsed.is_object()
-                && let Ok(flattened_values) = generic_flattening(&parsed)
-            {
-                for flattened_value in flattened_values {
-                    if let Value::Object(flattened_obj) = flattened_value {
-                        for (inner_key, inner_value) in flattened_obj {
-                            let prefixed_key = format!("{key}_{inner_key}");
-                            log_record_json.insert(prefixed_key, inner_value);
+            //
+            if let Value::String(s) = value {
+                let trimmed = s.trim();
+                let looks_like_json = trimmed.len() >= 2
+                    && matches!(
+                        (trimmed.as_bytes().first(), trimmed.as_bytes().last()),
+                        (Some(b'{'), Some(b'}')) | (Some(b'['), Some(b']'))
+                    );
+                // Skip speculative JSON parsing unless the body looks like structured JSON
+                if looks_like_json
+                    && let Ok(parsed) = serde_json::from_str::<Value>(s)
+                    && parsed.is_object()
+                    && let Ok(flattened_values) = generic_flattening(&parsed)
+                {
+                    for flattened_value in flattened_values {
+                        if let Value::Object(flattened_obj) = flattened_value {
+                            for (inner_key, inner_value) in flattened_obj {
+                                let prefixed_key = format!("{key}_{inner_key}");
+                                log_record_json.insert(prefixed_key, inner_value);
+                            }
                         }
                     }
                 }

@@ -124,7 +124,7 @@ fn collect_json_from_array_value(array_value: &ArrayValue) -> Value {
 /// The function iterates through the key-value pairs in the list
 /// and collects their JSON representations into a single Map
 fn collect_json_from_key_value_list(key_value_list: KeyValueList) -> Map<String, Value> {
-    let mut kv_list_json: Map<String, Value> = Map::new();
+    let mut kv_list_json: Map<String, Value> = Map::with_capacity(key_value_list.values.len());
     for key_value in key_value_list.values {
         if let Some(val) = key_value.value {
             if let Some(val) = val.value {
@@ -195,10 +195,13 @@ pub fn insert_bool_if_some(map: &mut Map<String, Value>, key: &str, option: &Opt
 }
 
 #[hotpath::measure]
+// Flatten and insert attribute in one pass to avoid an extra temporary map
 pub fn insert_attributes(map: &mut Map<String, Value>, attributes: &[KeyValue]) {
-    let attributes_json = flatten_attributes(attributes);
-    for (key, value) in attributes_json {
-        map.insert(key, value);
+    for attribute in attributes {
+        let value_json = collect_json_from_values(&attribute.value, &attribute.key);
+        for (attr_key, attr_val) in value_json {
+            map.insert(attr_key, attr_val);
+        }
     }
 }
 
